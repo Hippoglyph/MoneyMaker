@@ -1,0 +1,8 @@
+.env
+.venv
+**/__pycache__/
+**/tmp
+generate/clips/**
+client_secrets.json
+file_records.db
+token.json
