@@ -1,15 +1,25 @@
+from enum import StrEnum
+
+class ReviewStatus(StrEnum):
+     """Enum for the possible review statuses."""
+     PENDING = "Pending"
+     DENIED = "Denied"
+     ACCEPTED = "Accepted"
+
 class FileLogEntry:
     """
     Represents a single entry from the 'file_logs' database table.
     Provides getter methods for each column.
     """
     def __init__(self, id: int, description: str, filename: str,
-                 creation_timestamp: str, uploaded_youtube: str | None):
+                 creation_timestamp: str, uploaded_youtube: str | None,
+                 reviewed: str):
         self._id = id
         self._description = description
         self._filename = filename
         self._creation_timestamp = creation_timestamp
         self._uploaded_youtube = uploaded_youtube
+        self._reviewed = ReviewStatus(reviewed)
 
     def get_id(self) -> int:
         """Returns the ID of the log entry."""
@@ -38,8 +48,12 @@ class FileLogEntry:
         """Returns True if the file has been marked as uploaded to YouTube, False otherwise."""
         return self._uploaded_youtube is not None
 
+    def get_review_status(self) -> ReviewStatus:
+        """Returns the review status as a ReviewStatus enum member."""
+        return self._reviewed
+
     def __repr__(self):
         """Provides a string representation for debugging."""
         return (f"FileLogEntry(id={self._id}, description='{self._description}', "
                 f"filename='{self._filename}', created='{self._creation_timestamp}', "
-                f"uploaded_youtube='{self._uploaded_youtube}')")
+                f"uploaded_youtube='{self._uploaded_youtube}', reviewed={self._reviewed.value})")
