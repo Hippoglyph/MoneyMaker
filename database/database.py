@@ -93,7 +93,7 @@ class Database:
                 )
                 VALUES (?, ?, ?, ?, ?)
                 ''',
-                (description, filename, current_timestamp, None, {ReviewStatus.PENDING.value}) # uploaded_youtube is initially NULL, reviewed is 0 (False)
+                (description, filename, current_timestamp, None, ReviewStatus.PENDING.value) # uploaded_youtube is initially NULL, reviewed is 'Pending'
             )
             conn.commit()
             print(f"Successfully logged: Description='{description}', Filename='{filename}'")
@@ -232,20 +232,59 @@ class Database:
             conn.close()
 
     @staticmethod
-    def get_pending_youtube_uploads() -> list[FileLogEntry]:
+    def count_future_youtube_uploads() -> int:
         """
-        Retrieves all log entries that have not yet been marked as uploaded to YouTube,
+        Counts the number of log entries that are considered 'future' YouTube uploads.
+        This includes:
+        1. Entries where 'uploaded_youtube' timestamp is in the future relative to the current time (scheduled uploads).
+        2. Entries where 'uploaded_youtube' is NULL and the 'reviewed' status is either PENDING or ACCEPTED
+           (meaning they are awaiting upload and review approval).
+
+        Returns:
+            int: The count of entries meeting the criteria.
+                 Returns 0 if no such entries are found or an error occurs.
+        """
+        conn = Database.get_db_connection()
+        count = 0
+        if conn is None:
+            return count
+
+        try:
+            cursor = conn.cursor()
+            current_timestamp = datetime.now().isoformat()
+            cursor.execute(
+                f"""
+                SELECT COUNT(*) FROM file_logs
+                WHERE
+                    ({FileLogColumns.UPLOADED_YOUTUBE} IS NOT NULL AND {FileLogColumns.UPLOADED_YOUTUBE} > ?)
+                    OR
+                    ({FileLogColumns.UPLOADED_YOUTUBE} IS NULL AND ({FileLogColumns.REVIEWED} = ? OR {FileLogColumns.REVIEWED} = ?))
+                """,
+                (current_timestamp, ReviewStatus.PENDING.value, ReviewStatus.ACCEPTED.value)
+            )
+            count = cursor.fetchone()[0]
+        except sqlite3.Error as e:
+            print(f"Error counting future YouTube uploads: {e}")
+        finally:
+            conn.close()
+        return count
+    
+    @staticmethod
+    def get_pending_review_entries() -> list[FileLogEntry]:
+        """
+        Retrieves all log entries that currently have a 'PENDING' review status,
         returned as a list of FileLogEntry objects. Uses StringEnum for column names.
 
         Returns:
             list[FileLogEntry]: A list of FileLogEntry objects, where each object
-                                represents a log entry. Returns an empty list
-                                if no pending uploads are found or an error occurs.
+                                represents a log entry with a 'PENDING' review status.
+                                Returns an empty list if no such entries are found
+                                or an error occurs.
         """
         conn = Database.get_db_connection()
-        pending_uploads = []
+        pending_entries = []
         if conn is None:
-            return pending_uploads
+            return pending_entries
 
         try:
             cursor = conn.cursor()
@@ -255,52 +294,108 @@ class Database:
                 FileLogColumns.FILENAME,
                 FileLogColumns.CREATION_TIMESTAMP,
                 FileLogColumns.UPLOADED_YOUTUBE,
-                FileLogColumns.REVIEWED 
+                FileLogColumns.REVIEWED
             ])
             cursor.execute(f"""
                     SELECT {select_columns}
                     FROM file_logs
-                    WHERE {FileLogColumns.UPLOADED_YOUTUBE} IS NULL AND {FileLogColumns.REVIEWED} = {ReviewStatus.ACCEPTED.value}
+                    WHERE {FileLogColumns.REVIEWED} = ?
                     ORDER BY {FileLogColumns.CREATION_TIMESTAMP} ASC
-                """)
+                """, (ReviewStatus.PENDING.value,))
             rows = cursor.fetchall()
 
             for row in rows:
                 # Instantiate FileLogEntry object directly from the sqlite3.Row object
-                pending_uploads.append(FileLogEntry(**row))
+                pending_entries.append(FileLogEntry(**row))
 
         except sqlite3.Error as e:
-            print(f"Error retrieving pending YouTube uploads: {e}")
+            print(f"Error retrieving pending review entries: {e}")
         finally:
             conn.close()
-        return pending_uploads
+        return pending_entries
     
     @staticmethod
-    def count_future_youtube_uploads() -> int:
-         """
-         Counts the number of log entries that have an 'uploaded_youtube' timestamp
-         that is in the future relative to the current time. This can represent
-         videos uploaded but not yet public (scheduled uploads).
- 
-         Returns:
-             int: The count of entries with future 'uploaded_youtube' timestamps.
-                  Returns 0 if no such entries are found or an error occurs.
-         """
-         conn = Database.get_db_connection()
-         count = 0
-         if conn is None:
-             return count
- 
-         try:
-             cursor = conn.cursor()
-             current_timestamp = datetime.now().isoformat()
-             cursor.execute(
-                 f"SELECT COUNT(*) FROM file_logs WHERE {FileLogColumns.UPLOADED_YOUTUBE} IS NOT NULL AND {FileLogColumns.UPLOADED_YOUTUBE} > ?",
-                 (current_timestamp,)
-             )
-             count = cursor.fetchone()[0]
-         except sqlite3.Error as e:
-             print(f"Error counting future YouTube uploads: {e}")
-         finally:
-             conn.close()
-         return count
+    def get_latest_youtube_upload_timestamp() -> datetime | None:
+        """
+        Retrieves the datetime object of the most recent log entry
+        that has been marked as uploaded to YouTube.
+
+        Returns:
+            datetime | None: The datetime object of the latest YouTube upload,
+                             or None if no entries have been uploaded to YouTube.
+        """
+        conn = Database.get_db_connection()
+        latest_datetime = None 
+        if conn is None:
+            return latest_datetime
+
+        try:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                SELECT {FileLogColumns.UPLOADED_YOUTUBE}
+                FROM file_logs
+                WHERE {FileLogColumns.UPLOADED_YOUTUBE} IS NOT NULL
+                ORDER BY {FileLogColumns.UPLOADED_YOUTUBE} DESC
+                LIMIT 1
+            """)
+            result = cursor.fetchone()
+
+            if result:
+                timestamp_str = result[FileLogColumns.UPLOADED_YOUTUBE]
+                # Convert the ISO 8601 string to a datetime object
+                latest_datetime = datetime.fromisoformat(timestamp_str)
+
+        except sqlite3.Error as e:
+            print(f"Error retrieving latest YouTube upload timestamp: {e}")
+        except ValueError as e:
+            # Handle cases where the timestamp string might be malformed
+            print(f"Error parsing timestamp from database: {e}")
+            latest_datetime = None
+        finally:
+            conn.close()
+        return latest_datetime
+    
+    @staticmethod
+    def get_approved_but_not_youtube_uploaded_entries() -> list[FileLogEntry]:
+        """
+        Retrieves all log entries that have been 'ACCEPTED' for review
+        but have not yet been marked as uploaded to YouTube (uploaded_youtube IS NULL).
+
+        Returns:
+            list[FileLogEntry]: A list of FileLogEntry objects matching the criteria.
+                                Returns an empty list if no such entries are found
+                                or an error occurs.
+        """
+        conn = Database.get_db_connection()
+        approved_not_uploaded_entries = []
+        if conn is None:
+            return approved_not_uploaded_entries
+
+        try:
+            cursor = conn.cursor()
+            select_columns = ", ".join([
+                FileLogColumns.ID,
+                FileLogColumns.DESCRIPTION,
+                FileLogColumns.FILENAME,
+                FileLogColumns.CREATION_TIMESTAMP,
+                FileLogColumns.UPLOADED_YOUTUBE,
+                FileLogColumns.REVIEWED
+            ])
+            cursor.execute(f"""
+                    SELECT {select_columns}
+                    FROM file_logs
+                    WHERE {FileLogColumns.UPLOADED_YOUTUBE} IS NULL
+                      AND {FileLogColumns.REVIEWED} = ?
+                    ORDER BY {FileLogColumns.CREATION_TIMESTAMP} ASC
+                """, (ReviewStatus.ACCEPTED.value,)) # Pass the value for 'Accepted' status
+            rows = cursor.fetchall()
+
+            for row in rows:
+                # Instantiate FileLogEntry object directly from the sqlite3.Row object
+                approved_not_uploaded_entries.append(FileLogEntry(**row))
+
+        except sqlite3.Error as e:
+            print(f"Error retrieving approved but not uploaded entries: {e}")
+        finally:
+            conn.close()
+        return approved_not_uploaded_entries
