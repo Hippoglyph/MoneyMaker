@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from database.database import Database
 from database.file_log_entry import ReviewStatus
@@ -31,19 +31,42 @@ class Pipeline:
 
     def upload_youtube() -> None:
         pending_entries = Database.get_approved_but_not_youtube_uploaded_entries()
-        current_timestamp = datetime.now()
-        latest_timestamp = Database.get_latest_youtube_upload_timestamp()
-        upload_time = None
-        if latest_timestamp is None: # FIRST
-            upload_time = current_timestamp + timedelta(hours=1)
-        elif (current_timestamp - latest_timestamp) < timedelta(hours=Pipeline.UPLOAD_COOLDOWN):
-            upload_time = latest_timestamp + timedelta(hours=Pipeline.UPLOAD_COOLDOWN)
-        for entry in pending_entries:
-            if YoutubeUploader.upload_video(entry.get_description(), entry.get_description(), VideoGenerator.get_clip_folder() + entry.get_filename(), upload_time):
-                Database.mark_youtube_uploaded(entry.get_id())
+        current_timestamp = datetime.now(timezone.utc)
+        latest_timestamp = Database.get_latest_youtube_upload_timestamp() 
+        if latest_timestamp and latest_timestamp.tzinfo is None:
+            latest_timestamp = latest_timestamp.astimezone(timezone.utc)
+        upload_time_for_first_video_in_batch = None
+        if latest_timestamp is None: # FIRST EVER UPLOAD
+            upload_time_for_first_video_in_batch = current_timestamp + timedelta(hours=6)
+        else:
+            earliest_next_upload_slot = latest_timestamp + timedelta(hours=Pipeline.UPLOAD_COOLDOWN)
+
+            if current_timestamp < earliest_next_upload_slot:
+                upload_time_for_first_video_in_batch = earliest_next_upload_slot
             else:
-                print(f"Failed yo upload {entry.get_id()}")
-            upload_time =+ timedelta(hours=Pipeline.UPLOAD_COOLDOWN)
+                upload_time_for_first_video_in_batch = current_timestamp + timedelta(hours=6)
+                
+        current_scheduled_upload_time = upload_time_for_first_video_in_batch
+
+        for entry in pending_entries:
+            if current_scheduled_upload_time < current_timestamp:
+                print(f"Warning: Calculated upload time for {entry.get_id()} ({current_scheduled_upload_time}) is in the past. Adjusting to now + 1 minute.")
+                current_scheduled_upload_time = current_timestamp + timedelta(hour=6)
+
+            print(f"Attempting to upload video '{entry.get_description()}' (ID: {entry.get_id()}) scheduled for {current_scheduled_upload_time.isoformat()}")
+
+            if YoutubeUploader.upload_video(
+                entry.get_description(), 
+                entry.get_description(), 
+                VideoGenerator.get_clip_folder() + entry.get_filename(), 
+                current_scheduled_upload_time
+            ):
+                Database.mark_youtube_uploaded(entry.get_id())
+                print(f"Successfully uploaded and marked entry {entry.get_id()}")
+            else:
+                print(f"Failed to upload {entry.get_id()}")
+            
+            current_scheduled_upload_time += timedelta(hours=Pipeline.UPLOAD_COOLDOWN)
 
     def run() -> None:
         Pipeline.review()

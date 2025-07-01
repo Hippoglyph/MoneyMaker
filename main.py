@@ -15,5 +15,5 @@ from database.database import Database
 #         Database.mark_youtube_uploaded(entry.get_id())
 
 Pipeline.run()
-
-Database.view_all_logs()
+#YoutubeUploader._get_authenticated_service()
+#Database.view_all_logs()

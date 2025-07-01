@@ -90,8 +90,8 @@ class YoutubeUploader:
             if schedule_datetime < datetime.datetime.now(datetime.timezone.utc):
                 print("Warning: Schedule datetime is in the past. Video will likely publish immediately.")
 
-            # Format to RFC 3339 string (e.g., 2024-01-25T10:00:00Z)
-            publish_at_str = schedule_datetime.isoformat(timespec='seconds') + 'Z'
+            # Format as RFC 3339 with 'Z'
+            publish_at_str = schedule_datetime.strftime('%Y-%m-%dT%H:%M:%SZ')
 
             # If scheduling, privacy status MUST be 'private' at upload time
             if effective_privacy_status != 'private':
