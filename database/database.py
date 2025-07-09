@@ -105,7 +105,7 @@ class Database:
             conn.close()
 
     @staticmethod
-    def mark_youtube_uploaded(log_id: int):
+    def mark_youtube_uploaded(log_id: int, datetime : datetime):
         """
         Updates the 'uploaded_youtube' timestamp for a specific log entry by its ID.
         Uses StringEnum for column names.
@@ -119,7 +119,7 @@ class Database:
 
         try:
             cursor = conn.cursor()
-            current_timestamp = datetime.now().isoformat() # Current time when marked as uploaded
+            timestamp = datetime.isoformat() # Current time when marked as uploaded
 
             # Use enum members for column names in the UPDATE statement
             cursor.execute(
@@ -128,12 +128,12 @@ class Database:
                 SET {FileLogColumns.UPLOADED_YOUTUBE} = ?
                 WHERE {FileLogColumns.ID} = ?
                 ''',
-                (current_timestamp, log_id)
+                (timestamp, log_id)
             )
             conn.commit()
 
             if cursor.rowcount > 0:
-                print(f"Successfully marked log ID {log_id} as uploaded to YouTube at {current_timestamp}.")
+                print(f"Successfully marked log ID {log_id} as uploaded to YouTube at {timestamp}.")
             else:
                 print(f"No log entry found with ID {log_id}.")
 

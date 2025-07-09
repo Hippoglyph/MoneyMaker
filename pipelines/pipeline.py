@@ -64,7 +64,7 @@ class Pipeline:
                 VideoGenerator.get_clip_folder() + entry.get_filename(), 
                 current_scheduled_upload_time
             ):
-                Database.mark_youtube_uploaded(entry.get_id())
+                Database.mark_youtube_uploaded(entry.get_id(), current_scheduled_upload_time)
                 print(f"Successfully uploaded and marked entry {entry.get_id()}")
             else:
                 print(f"Failed to upload {entry.get_id()}")
