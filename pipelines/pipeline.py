@@ -11,7 +11,7 @@ from uploaders.youtube_uploader import YoutubeUploader
 class Pipeline:
 
     GENERATION_BATCH_SIZE = 10
-    QUEUE_SIZE = 10
+    QUEUE_SIZE = 30
     UPLOAD_COOLDOWN = 24 #h
 
     def review() -> None:
@@ -31,27 +31,30 @@ class Pipeline:
 
     def upload_youtube() -> None:
         pending_entries = Database.get_approved_but_not_youtube_uploaded_entries()
+        if not pending_entries:
+            return
         current_timestamp = datetime.now(timezone.utc)
         latest_timestamp = Database.get_latest_youtube_upload_timestamp() 
         if latest_timestamp and latest_timestamp.tzinfo is None:
             latest_timestamp = latest_timestamp.astimezone(timezone.utc)
-        upload_time_for_first_video_in_batch = None
+        next_upload_slot = None
         if latest_timestamp is None: # FIRST EVER UPLOAD
-            upload_time_for_first_video_in_batch = current_timestamp + timedelta(hours=6)
+            next_upload_slot = current_timestamp + timedelta(hours=6)
         else:
-            earliest_next_upload_slot = latest_timestamp + timedelta(hours=Pipeline.UPLOAD_COOLDOWN)
+            earliest_allowed_time = latest_timestamp + timedelta(hours=Pipeline.UPLOAD_COOLDOWN)
 
-            if current_timestamp < earliest_next_upload_slot:
-                upload_time_for_first_video_in_batch = earliest_next_upload_slot
+            if current_timestamp < earliest_allowed_time:
+                next_upload_slot = earliest_allowed_time
             else:
-                upload_time_for_first_video_in_batch = current_timestamp + timedelta(hours=6)
+                next_upload_slot = current_timestamp + timedelta(minutes=1)
                 
-        current_scheduled_upload_time = upload_time_for_first_video_in_batch
+        current_scheduled_upload_time = next_upload_slot
 
         for entry in pending_entries:
+            current_timestamp = datetime.now(timezone.utc)
             if current_scheduled_upload_time < current_timestamp:
                 print(f"Warning: Calculated upload time for {entry.get_id()} ({current_scheduled_upload_time}) is in the past. Adjusting to now + 1 minute.")
-                current_scheduled_upload_time = current_timestamp + timedelta(hour=6)
+                current_scheduled_upload_time = current_timestamp + timedelta(minutes=1)
 
             print(f"Attempting to upload video '{entry.get_description()}' (ID: {entry.get_id()}) scheduled for {current_scheduled_upload_time.isoformat()}")
 
@@ -70,7 +73,8 @@ class Pipeline:
 
     def run() -> None:
         Pipeline.review()
-
+        Pipeline.upload_youtube()
+        
         if Database.count_future_youtube_uploads() < Pipeline.QUEUE_SIZE:
             input(f"Need to generate {Pipeline.GENERATION_BATCH_SIZE} videos. Proceed?")
             load_dotenv(override=True)
